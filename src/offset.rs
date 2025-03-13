@@ -1,12 +1,27 @@
 use super::*;
 use geo_clipper::Clipper;
 use geo_types::CoordFloat;
+use num_traits::FloatConst;
 
 /// If offset computing fails this error is returned.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum OffsetError {
     /// This error can be produced when manipulating edges.
     EdgeError(EdgeError),
+}
+
+/// `geo-clipper` does integer computation and requires a factor to enlarge the shapes
+/// before the computation and shrink them after.
+/// This trait exists purely to keep the constant used in one place.
+trait ClipperFactor {
+    fn clipper_factor() -> Self;
+}
+
+impl<F: CoordFloat> ClipperFactor for F {
+    #[inline]
+    fn clipper_factor() -> Self {
+        F::from(1000.0).unwrap()
+    }
 }
 
 /// Resolution of arcs generated around corners for positive offsets.
@@ -18,20 +33,20 @@ pub enum OffsetError {
 /// assert_eq!(resolution, ArcResolution::SegmentCount(5));
 /// ```
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub enum ArcResolution<F: CoordFloat> {
+pub enum ArcResolution<F: CoordFloat + FloatConst> {
     /// Sets the exact number of arc segments to be generated.
     SegmentCount(usize),
     /// Sets the desired segment length, so that the number of segments is chosen based on the length of the arc.
     SegmentLength(F),
 }
 
-impl<F: CoordFloat> Default for ArcResolution<F> {
+impl<F: CoordFloat + FloatConst> Default for ArcResolution<F> {
     fn default() -> Self {
         Self::SegmentCount(5)
     }
 }
 
-pub trait Offset<F: CoordFloat> {
+pub trait Offset<F: CoordFloat + FloatConst> {
     fn offset(&self, distance: F) -> Result<geo_types::MultiPolygon<F>, OffsetError> {
         self.offset_with_arc_resolution(distance, Default::default())
     }
@@ -43,7 +58,7 @@ pub trait Offset<F: CoordFloat> {
     ) -> Result<geo_types::MultiPolygon<F>, OffsetError>;
 }
 
-impl<F: CoordFloat> Offset<F> for geo_types::GeometryCollection<F> {
+impl<F: CoordFloat + FloatConst> Offset<F> for geo_types::GeometryCollection<F> {
     fn offset_with_arc_resolution(
         &self,
         distance: F,
@@ -53,13 +68,13 @@ impl<F: CoordFloat> Offset<F> for geo_types::GeometryCollection<F> {
         for geometry in self.0.iter() {
             let geometry_with_offset = geometry.offset_with_arc_resolution(distance, arc_resolution)?;
             geometry_collection_with_offset = geometry_collection_with_offset
-                .union(&geometry_with_offset, F::from(1000.0).unwrap());
+                .union(&geometry_with_offset, F::clipper_factor());
         }
         Ok(geometry_collection_with_offset)
     }
 }
 
-impl<F: CoordFloat> Offset<F> for geo_types::Geometry<F> {
+impl<F: CoordFloat + FloatConst> Offset<F> for geo_types::Geometry<F> {
     fn offset_with_arc_resolution(
         &self,
         distance: F,
@@ -100,7 +115,7 @@ impl<F: CoordFloat> Offset<F> for geo_types::Geometry<F> {
     }
 }
 
-impl<F: CoordFloat> Offset<F> for geo_types::MultiPolygon<F> {
+impl<F: CoordFloat + FloatConst> Offset<F> for geo_types::MultiPolygon<F> {
     fn offset_with_arc_resolution(
         &self,
         distance: F,
@@ -109,13 +124,13 @@ impl<F: CoordFloat> Offset<F> for geo_types::MultiPolygon<F> {
         let mut polygons = geo_types::MultiPolygon::<F>(Vec::new());
         for polygon in self.0.iter() {
             let polygon_with_offset = polygon.offset_with_arc_resolution(distance, arc_resolution)?;
-            polygons = polygons.union(&polygon_with_offset, F::from(1000.0).unwrap());
+            polygons = polygons.union(&polygon_with_offset, F::clipper_factor());
         }
         Ok(polygons)
     }
 }
 
-impl<F: CoordFloat> Offset<F> for geo_types::Polygon<F> {
+impl<F: CoordFloat + FloatConst> Offset<F> for geo_types::Polygon<F> {
     fn offset_with_arc_resolution(
         &self,
         distance: F,
@@ -128,16 +143,16 @@ impl<F: CoordFloat> Offset<F> for geo_types::Polygon<F> {
             .offset_with_arc_resolution(distance.abs(), arc_resolution)?;
 
         Ok(if distance.is_sign_positive() {
-            self.union(&exterior_with_offset, F::from(1000.0).unwrap())
-                .union(&interiors_with_offset, F::from(1000.0).unwrap())
+            self.union(&exterior_with_offset, F::clipper_factor())
+                .union(&interiors_with_offset, F::clipper_factor())
         } else {
-            self.difference(&exterior_with_offset, F::from(1000.0).unwrap())
-                .difference(&interiors_with_offset, F::from(1000.0).unwrap())
+            self.difference(&exterior_with_offset, F::clipper_factor())
+                .difference(&interiors_with_offset, F::clipper_factor())
         })
     }
 }
 
-impl<F: CoordFloat> Offset<F> for geo_types::MultiLineString<F> {
+impl<F: CoordFloat + FloatConst> Offset<F> for geo_types::MultiLineString<F> {
     fn offset_with_arc_resolution(
         &self,
         distance: F,
@@ -152,13 +167,13 @@ impl<F: CoordFloat> Offset<F> for geo_types::MultiLineString<F> {
             let line_string_with_offset =
                 line_string.offset_with_arc_resolution(distance, arc_resolution)?;
             multi_line_string_with_offset = multi_line_string_with_offset
-                .union(&line_string_with_offset, F::from(1000.0).unwrap());
+                .union(&line_string_with_offset, F::clipper_factor());
         }
         Ok(multi_line_string_with_offset)
     }
 }
 
-impl<F: CoordFloat> Offset<F> for geo_types::LineString<F> {
+impl<F: CoordFloat + FloatConst> Offset<F> for geo_types::LineString<F> {
     fn offset_with_arc_resolution(
         &self,
         distance: F,
@@ -172,7 +187,7 @@ impl<F: CoordFloat> Offset<F> for geo_types::LineString<F> {
         for line in self.lines() {
             let line_with_offset = line.offset_with_arc_resolution(distance, arc_resolution)?;
             line_string_with_offset =
-                line_string_with_offset.union(&line_with_offset, F::from(1000.0).unwrap());
+                line_string_with_offset.union(&line_with_offset, F::clipper_factor());
         }
 
         let line_string_with_offset = line_string_with_offset.0.iter().skip(1).fold(
@@ -183,14 +198,14 @@ impl<F: CoordFloat> Offset<F> for geo_types::LineString<F> {
                     .map(|polygon| vec![polygon.clone()])
                     .unwrap_or_default(),
             ),
-            |result, hole| result.difference(hole, F::from(1000.0).unwrap()),
+            |result, hole| result.difference(hole, F::clipper_factor()),
         );
 
         Ok(line_string_with_offset)
     }
 }
 
-impl<F: CoordFloat> Offset<F> for geo_types::Line<F> {
+impl<F: CoordFloat + FloatConst> Offset<F> for geo_types::Line<F> {
     fn offset_with_arc_resolution(
         &self,
         distance: F,
@@ -237,7 +252,7 @@ impl<F: CoordFloat> Offset<F> for geo_types::Line<F> {
     }
 }
 
-impl<F: CoordFloat> Offset<F> for geo_types::MultiPoint<F> {
+impl<F: CoordFloat + FloatConst> Offset<F> for geo_types::MultiPoint<F> {
     fn offset_with_arc_resolution(
         &self,
         distance: F,
@@ -251,13 +266,13 @@ impl<F: CoordFloat> Offset<F> for geo_types::MultiPoint<F> {
         for point in self.0.iter() {
             let point_with_offset = point.offset_with_arc_resolution(distance, arc_resolution)?;
             multi_point_with_offset =
-                multi_point_with_offset.union(&point_with_offset, F::from(1000.0).unwrap());
+                multi_point_with_offset.union(&point_with_offset, F::clipper_factor());
         }
         Ok(multi_point_with_offset)
     }
 }
 
-impl<F: CoordFloat> Offset<F> for geo_types::Point<F> {
+impl<F: CoordFloat + FloatConst> Offset<F> for geo_types::Point<F> {
     fn offset_with_arc_resolution(
         &self,
         distance: F,
@@ -267,22 +282,22 @@ impl<F: CoordFloat> Offset<F> for geo_types::Point<F> {
             return Ok(geo_types::MultiPolygon(Vec::new()));
         }
 
-        let tau = F::from(std::f64::consts::TAU).unwrap();
         let mut angle = F::zero();
 
         let segment_count = match arc_resolution {
             ArcResolution::SegmentCount(segment_count) => segment_count,
             ArcResolution::SegmentLength(segment_length) => {
-                let circumference = tau * distance;
+                let circumference = F::TAU() * distance;
                 (circumference / segment_length).to_usize().unwrap()
             },
         };
         let segment_count = segment_count.max(3); // A circle should have at least three sides :)
 
+        let angle_per_segment = F::TAU() / F::from(segment_count).unwrap();
+
         let contour = (0..segment_count)
             .map(|_| {
-                angle =
-                    angle + F::from(2.0 * std::f64::consts::PI / segment_count as f64).unwrap(); // counter-clockwise
+                angle = angle + angle_per_segment; // counter-clockwise
 
                 geo_types::Coord::from((
                     self.x() + (distance * angle.cos()),
@@ -298,7 +313,7 @@ impl<F: CoordFloat> Offset<F> for geo_types::Point<F> {
     }
 }
 
-fn create_arc<F: CoordFloat>(
+fn create_arc<F: CoordFloat + FloatConst>(
     vertices: &mut Vec<geo_types::Coord<F>>,
     center: &geo_types::Coord<F>,
     radius: F,
@@ -307,18 +322,16 @@ fn create_arc<F: CoordFloat>(
     arc_resolution: ArcResolution<F>,
     outwards: bool,
 ) {
-    let tau = F::from(std::f64::consts::TAU).unwrap();
-
     let start_angle = (start_vertex.y - center.y).atan2(start_vertex.x - center.x);
     let start_angle = if start_angle.is_sign_negative() {
-        start_angle + tau
+        start_angle + F::TAU()
     } else {
         start_angle
     };
 
     let end_angle = (end_vertex.y - center.y).atan2(end_vertex.x - center.x);
     let end_angle = if end_angle.is_sign_negative() {
-        end_angle + tau
+        end_angle + F::TAU()
     } else {
         end_angle
     };
@@ -326,7 +339,7 @@ fn create_arc<F: CoordFloat>(
     let angle = if start_angle > end_angle {
         start_angle - end_angle
     } else {
-        start_angle + tau - end_angle
+        start_angle + F::TAU() - end_angle
     };
 
     let segment_count = match arc_resolution {
@@ -338,7 +351,7 @@ fn create_arc<F: CoordFloat>(
     };
 
     let segment_angle =
-        if outwards { -angle } else { tau - angle } / F::from(segment_count).unwrap();
+        if outwards { -angle } else { F::TAU() - angle } / F::from(segment_count).unwrap();
 
     vertices.push(*start_vertex);
     for i in 1..segment_count {
